@@ -30,13 +30,7 @@ To sync events from Google Calendar, you need to set up OAuth 2.0 Credentials:
 7. Rename the downloaded file to `credentials.json` and place it in this project's root folder (or upload it directly through the dashboard interface under *Settings*).
 ### 4. Running the Dashboard
 
-Run the Flask server:
-
-```bash
-
-python app.py
-
-```
+Run "run.bat" if on **Windows** or "run.sh" if on **Linux**.
 
 After starting the server, open your browser and navigate to:
 
