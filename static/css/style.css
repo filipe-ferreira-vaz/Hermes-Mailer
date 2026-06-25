@@ -950,3 +950,58 @@ tr:hover td {
 #credentials-file-input {
     display: none;
 }
+
+/* Day Filtering and Format Selection Dropdown Styling */
+.filter-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    background: rgba(255, 255, 255, 0.03);
+    padding: 0.35rem 0.75rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--glass-border);
+}
+
+.switch-container {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+.switch-container input[type="checkbox"] {
+    cursor: pointer;
+    accent-color: var(--accent-primary);
+    width: 15px;
+    height: 15px;
+}
+
+.switch-label {
+    user-select: none;
+}
+
+.filter-select {
+    background: var(--bg-secondary);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    padding: 0.35rem 0.75rem;
+    font-family: inherit;
+    font-size: 0.85rem;
+    outline: none;
+    cursor: pointer;
+    transition: var(--transition-fast);
+}
+
+.filter-select:focus {
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+}
+
+/* Ensure settings dropdown styling fits nicely */
+#settings-format-select {
+    height: 42px;
+}

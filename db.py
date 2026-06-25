@@ -44,6 +44,16 @@ def init_db():
         )
     ''')
     
+    # Email Formats table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS email_formats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            subject_template TEXT NOT NULL,
+            body_template TEXT NOT NULL
+        )
+    ''')
+    
     # Run migrations for existing databases that were initialized before
     new_cols = [
         ('event_day', 'TEXT'),
@@ -66,8 +76,24 @@ def init_db():
         'smtp_user': '',
         'smtp_pass': '',
         'smtp_use_tls': '1',
-        'email_subject_template': 'Reminder: {event_name} on {event_day} de {event_month} ({week_day})',
-        'email_body_template': (
+        'default_format_name': 'Default Reminder'
+    }
+    
+    for key, val in default_settings.items():
+        cursor.execute('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)', (key, val))
+        
+    # Check if we need to seed email_formats
+    cursor.execute('SELECT COUNT(*) FROM email_formats')
+    count = cursor.fetchone()[0]
+    if count == 0:
+        # Check if we have legacy templates in settings to migrate
+        cursor.execute("SELECT value FROM settings WHERE key = 'email_subject_template'")
+        legacy_subj_row = cursor.fetchone()
+        cursor.execute("SELECT value FROM settings WHERE key = 'email_body_template'")
+        legacy_body_row = cursor.fetchone()
+        
+        subj_val = legacy_subj_row[0] if legacy_subj_row else 'Reminder: {event_name} on {event_day} de {event_month} ({week_day})'
+        body_val = legacy_body_row[0] if legacy_body_row else (
             "Dear {first_name} {last_name},\n\n"
             "This is a friendly reminder for your upcoming event: {event_name}.\n"
             "It is scheduled on {week_day}, {event_day} de {event_month} at {event_time_24h}.\n\n"
@@ -75,10 +101,11 @@ def init_db():
             "Best regards,\n"
             "Event Staff"
         )
-    }
-    
-    for key, val in default_settings.items():
-        cursor.execute('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)', (key, val))
+        
+        cursor.execute('''
+            INSERT INTO email_formats (name, subject_template, body_template)
+            VALUES (?, ?, ?)
+        ''', ('Default Reminder', subj_val, body_val))
         
     conn.commit()
     conn.close()
@@ -186,5 +213,55 @@ def delete_event(event_id):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('DELETE FROM events WHERE event_id = ?', (event_id,))
+    conn.commit()
+    conn.close()
+
+# Email Formats Helpers
+def get_all_formats():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM email_formats ORDER BY name ASC')
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def get_format(name):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM email_formats WHERE name = ?', (name,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def save_format(name, subject, body, original_name=None):
+    """
+    Inserts or updates an email format.
+    If original_name is provided and is different from name, we rename/update the record.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    if original_name and original_name != name:
+        cursor.execute('''
+            UPDATE email_formats
+            SET name = ?, subject_template = ?, body_template = ?
+            WHERE name = ?
+        ''', (name, subject, body, original_name))
+    else:
+        cursor.execute('''
+            INSERT INTO email_formats (name, subject_template, body_template)
+            VALUES (?, ?, ?)
+            ON CONFLICT(name) DO UPDATE SET
+                subject_template = excluded.subject_template,
+                body_template = excluded.body_template
+        ''', (name, subject, body))
+        
+    conn.commit()
+    conn.close()
+
+def delete_format(name):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM email_formats WHERE name = ?', (name,))
     conn.commit()
     conn.close()

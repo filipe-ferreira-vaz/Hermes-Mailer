@@ -212,9 +212,17 @@ def sync_calendar():
         
     calendar_id = db.get_setting('calendar_id', 'primary')
     
-    # Fetch settings templates
-    subj_template = db.get_setting('email_subject_template', '')
-    body_template = db.get_setting('email_body_template', '')
+    # Fetch default email format from formats table
+    default_format_name = db.get_setting('default_format_name', 'Default Reminder')
+    email_format = db.get_format(default_format_name)
+    if not email_format:
+        # Fallback to the first available format
+        all_formats = db.get_all_formats()
+        if all_formats:
+            email_format = all_formats[0]
+            
+    subj_template = email_format['subject_template'] if email_format else ''
+    body_template = email_format['body_template'] if email_format else ''
     
     try:
         # Fetch upcoming events starting from now

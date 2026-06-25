@@ -2,6 +2,8 @@ import os
 import sys
 from datetime import datetime, timezone
 from flask import Flask, request, jsonify, render_template, redirect, session, url_for
+import webbrowser
+import threading
 from werkzeug.utils import secure_filename
 from google_auth_oauthlib.flow import Flow
 
@@ -228,6 +230,99 @@ def reset_database_endpoint():
     db.reset_db()
     return jsonify({'success': True, 'message': 'All dashboard events and sent history have been reset.'})
 
+# Email Formats API
+@app.route('/api/formats', methods=['GET'])
+def get_formats_endpoint():
+    formats = db.get_all_formats()
+    return jsonify(formats)
+
+@app.route('/api/formats', methods=['POST'])
+def save_format_endpoint():
+    data = request.json or {}
+    name = data.get('name', '').strip()
+    subject = data.get('subject_template', '').strip()
+    body = data.get('body_template', '').strip()
+    original_name = data.get('original_name', '').strip() or None
+    
+    if not name or not subject or not body:
+        return jsonify({'error': 'Format name, subject template, and body template are all required.'}), 400
+        
+    try:
+        db.save_format(name, subject, body, original_name)
+        
+        # If this is the first format or if we renamed the default format, update default_format_name setting
+        default_format = db.get_setting('default_format_name')
+        if not default_format or (original_name and default_format == original_name):
+            db.save_setting('default_format_name', name)
+            
+        return jsonify({'success': True, 'message': 'Email format saved successfully.'})
+    except Exception as e:
+        return jsonify({'error': f'Failed to save format: {str(e)}'}), 500
+
+@app.route('/api/formats/<name>', methods=['DELETE'])
+def delete_format_endpoint(name):
+    all_formats = db.get_all_formats()
+    if len(all_formats) <= 1:
+        return jsonify({'error': 'You must keep at least one email format.'}), 400
+        
+    try:
+        db.delete_format(name)
+        
+        # If we deleted the default format, update default_format_name to another template
+        default_format = db.get_setting('default_format_name')
+        if default_format == name:
+            remaining_formats = db.get_all_formats()
+            if remaining_formats:
+                db.save_setting('default_format_name', remaining_formats[0]['name'])
+                
+        return jsonify({'success': True, 'message': 'Email format deleted.'})
+    except Exception as e:
+        return jsonify({'error': f'Failed to delete format: {str(e)}'}), 500
+
+@app.route('/api/formats/compile', methods=['POST'])
+def compile_format_endpoint():
+    data = request.json or {}
+    subject_template = data.get('subject_template', '')
+    body_template = data.get('body_template', '')
+    event_data = data.get('event_data', {})
+    
+    compiled_subject = calendar_helper.compile_template(subject_template, event_data)
+    compiled_body = calendar_helper.compile_template(body_template, event_data)
+    
+    return jsonify({
+        'compiled_subject': compiled_subject,
+        'compiled_body': compiled_body
+    })
+
+def open_browser():
+    import tempfile
+    lock_path = os.path.join(tempfile.gettempdir(), 'hermes_browser.lock')
+    if os.path.exists(lock_path):
+        return
+    try:
+        with open(lock_path, 'w') as f:
+            f.write('opened')
+    except OSError:
+        pass
+        
+    url = "http://127.0.0.1.nip.io:5000"
+    print(f"\nTo open the dashboard, press CTRL + this link: {url}\n")
+    webbrowser.open(url)
+
 if __name__ == '__main__':
+    # Clean up lock file on fresh startup (parent process)
+    if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
+        import tempfile
+        lock_path = os.path.join(tempfile.gettempdir(), 'hermes_browser.lock')
+        if os.path.exists(lock_path):
+            try:
+                os.remove(lock_path)
+            except OSError:
+                pass
+
+    # Automatically open browser on start (except reloader double-runs)
+    if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+        threading.Timer(1.2, open_browser).start()
+        
     # Run locally on port 5000
     app.run(host='0.0.0.0', port=5000, debug=True)

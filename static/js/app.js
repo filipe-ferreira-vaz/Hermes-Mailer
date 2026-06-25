@@ -15,6 +15,8 @@ const elements = {
     // Upcoming Events Tab
     upcomingGrid: document.getElementById('upcoming-events-grid'),
     eventsLoader: document.getElementById('events-loader'),
+    filterDaysToggle: document.getElementById('filter-days-toggle'),
+    filterDaysSelect: document.getElementById('filter-days-select'),
     
     // Sent Emails Tab
     sentTableBody: document.getElementById('sent-events-table-body'),
@@ -41,6 +43,11 @@ const elements = {
     testSmtpBtn: document.getElementById('test-smtp-btn'),
     
     templateForm: document.getElementById('template-settings-form'),
+    settingsFormatSelect: document.getElementById('settings-format-select'),
+    createFormatBtn: document.getElementById('create-format-btn'),
+    deleteFormatBtn: document.getElementById('delete-format-btn'),
+    templateNameInput: document.getElementById('template-name-input'),
+    setDefaultFormatCheckbox: document.getElementById('set-default-format-checkbox'),
     templateSubject: document.getElementById('template-subject-input'),
     templateBody: document.getElementById('template-body-input'),
     
@@ -60,6 +67,7 @@ const elements = {
     modalInputLast: document.getElementById('modal-last-name-input'),
     modalInputEmail: document.getElementById('modal-email-input'),
     modalOriginalDesc: document.getElementById('modal-original-description'),
+    modalFormatSelect: document.getElementById('modal-format-select'),
     modalInputSubject: document.getElementById('modal-email-subject-input'),
     modalInputBody: document.getElementById('modal-email-body-input'),
     
@@ -253,7 +261,29 @@ async function fetchEvents() {
 
 // Render upcoming drafts
 function renderUpcomingGrid() {
-    const drafts = state.events;
+    let drafts = state.events;
+    
+    console.log("renderUpcomingGrid called. Total drafts:", drafts.length);
+    console.log("filterDaysToggle checked:", elements.filterDaysToggle ? elements.filterDaysToggle.checked : "null");
+    
+    // Filter by upcoming x days if toggle is enabled
+    if (elements.filterDaysToggle && elements.filterDaysToggle.checked) {
+        const daysLimit = parseInt(elements.filterDaysSelect.value, 10) || 2;
+        const limitDate = new Date();
+        limitDate.setDate(limitDate.getDate() + daysLimit);
+        limitDate.setHours(23, 59, 59, 999);
+        
+        console.log(`Filtering limit active: next ${daysLimit} days. Limit Date Threshold:`, limitDate.toLocaleString());
+        
+        drafts = drafts.filter(event => {
+            if (!event.start_time) return false;
+            const eventDate = new Date(event.start_time);
+            const keep = eventDate <= limitDate;
+            console.log(`Event "${event.name}" - start_time: ${event.start_time}, parsedDate: ${eventDate.toLocaleString()}, keep: ${keep}`);
+            return keep;
+        });
+    }
+
     elements.upcomingGrid.innerHTML = '';
     
     if (drafts.length === 0) {
@@ -267,7 +297,7 @@ function renderUpcomingGrid() {
                         <line x1="3" y1="10" x2="21" y2="10"></line>
                     </svg>
                     <h3>No Upcoming Event Drafts</h3>
-                    <p>There are no upcoming events in draft mode. Click 'Sync Calendar' above to fetch latest schedule.</p>
+                    <p>There are no upcoming events in draft mode matching current filters. Click 'Sync Calendar' above to fetch latest schedule.</p>
                 </div>
             </div>
         `;
@@ -529,6 +559,72 @@ async function restoreEvent(eventId) {
     }
 }
 
+let originalFormatName = "";
+
+async function fetchFormats(selectName = null) {
+    try {
+        const res = await fetch('/api/formats');
+        const formats = await res.json();
+        state.formats = formats;
+        
+        // Populate settings formats select
+        if (elements.settingsFormatSelect) {
+            elements.settingsFormatSelect.innerHTML = '';
+            formats.forEach(fmt => {
+                const opt = document.createElement('option');
+                opt.value = fmt.name;
+                opt.textContent = fmt.name;
+                elements.settingsFormatSelect.appendChild(opt);
+            });
+        }
+        
+        // Populate modal format select
+        if (elements.modalFormatSelect) {
+            elements.modalFormatSelect.innerHTML = '';
+            const placeholder = document.createElement('option');
+            placeholder.value = "";
+            placeholder.textContent = "-- Select Template to Apply --";
+            elements.modalFormatSelect.appendChild(placeholder);
+            
+            formats.forEach(fmt => {
+                const opt = document.createElement('option');
+                opt.value = fmt.name;
+                opt.textContent = fmt.name;
+                elements.modalFormatSelect.appendChild(opt);
+            });
+        }
+        
+        const defaultFormatName = state.settings.default_format_name || 'Default Reminder';
+        const nameToSelect = selectName || defaultFormatName;
+        
+        if (elements.settingsFormatSelect) {
+            elements.settingsFormatSelect.value = nameToSelect;
+            if (!elements.settingsFormatSelect.value && formats.length > 0) {
+                elements.settingsFormatSelect.value = formats[0].name;
+            }
+            
+            loadFormatDetails(elements.settingsFormatSelect.value);
+        }
+    } catch (e) {
+        showToast('Error loading email formats', 'error');
+    }
+}
+
+function loadFormatDetails(name) {
+    if (!state.formats) return;
+    const fmt = state.formats.find(f => f.name === name);
+    if (fmt) {
+        elements.templateNameInput.value = fmt.name;
+        elements.templateSubject.value = fmt.subject_template;
+        elements.templateBody.value = fmt.body_template;
+        
+        const defaultFormatName = state.settings.default_format_name || 'Default Reminder';
+        elements.setDefaultFormatCheckbox.checked = (fmt.name === defaultFormatName);
+        
+        originalFormatName = fmt.name;
+    }
+}
+
 // Fetch Settings Config
 async function fetchSettings() {
     try {
@@ -545,8 +641,7 @@ async function fetchSettings() {
         elements.smtpPass.value = data.smtp_pass || '';
         elements.smtpUseTls.checked = data.smtp_use_tls === '1';
         
-        elements.templateSubject.value = data.email_subject_template || '';
-        elements.templateBody.value = data.email_body_template || '';
+        await fetchFormats();
     } catch (e) {
         showToast('Error loading configuration details', 'error');
     }
@@ -573,14 +668,54 @@ elements.smtpForm.addEventListener('submit', async (e) => {
 elements.templateForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     
-    const settingsPayload = {
-        ...state.settings,
-        calendar_id: elements.calendarIdInput.value,
-        email_subject_template: elements.templateSubject.value,
-        email_body_template: elements.templateBody.value
+    const name = elements.templateNameInput.value.trim();
+    const subject = elements.templateSubject.value.trim();
+    const body = elements.templateBody.value.trim();
+    const isDefault = elements.setDefaultFormatCheckbox.checked;
+    
+    if (!name || !subject || !body) {
+        showToast('Template name, subject, and body are all required.', 'error');
+        return;
+    }
+    
+    const payload = {
+        name: name,
+        subject_template: subject,
+        body_template: body,
+        original_name: originalFormatName
     };
     
-    await saveSettingsAPI(settingsPayload, 'Email templates updated! This will format all future event synchronization drafts.');
+    try {
+        const res = await fetch('/api/formats', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+            showToast('Template format saved successfully!', 'success');
+            
+            if (isDefault) {
+                const settingsPayload = {
+                    ...state.settings,
+                    default_format_name: name
+                };
+                await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(settingsPayload)
+                });
+                state.settings.default_format_name = name;
+            }
+            
+            await fetchSettings();
+        } else {
+            showToast(data.error || 'Failed to save format', 'error');
+        }
+    } catch (e) {
+        showToast('Network error saving format template', 'error');
+    }
 });
 
 // Save Google Settings Form (Calendar ID)
@@ -719,6 +854,9 @@ function openEventModal(event) {
     elements.modalInputLast.value = event.participant_last_name || '';
     elements.modalInputEmail.value = event.participant_email || '';
     elements.modalOriginalDesc.textContent = event.description || 'No description provided';
+    if (elements.modalFormatSelect) {
+        elements.modalFormatSelect.value = "";
+    }
     elements.modalInputSubject.value = event.email_subject || '';
     elements.modalInputBody.value = event.email_body || '';
     
@@ -738,8 +876,8 @@ function openEventModal(event) {
     const formControls = [
         elements.modalInputTitle, elements.modalInputStart,
         elements.modalInputFirst, elements.modalInputLast,
-        elements.modalInputEmail, elements.modalInputSubject,
-        elements.modalInputBody
+        elements.modalInputEmail, elements.modalFormatSelect,
+        elements.modalInputSubject, elements.modalInputBody
     ];
     
     formControls.forEach(ctrl => {
@@ -877,68 +1015,213 @@ document.addEventListener('DOMContentLoaded', () => {
     initTabs();
     
     // Sync button
-    elements.syncBtn.addEventListener('click', syncCalendarEvents);
+    if (elements.syncBtn) {
+        elements.syncBtn.addEventListener('click', syncCalendarEvents);
+    }
     
     // Google logout button
-    elements.googleLogoutBtn.addEventListener('click', handleGoogleLogout);
+    if (elements.googleLogoutBtn) {
+        elements.googleLogoutBtn.addEventListener('click', handleGoogleLogout);
+    }
     
     // Google authenticate button (saves ID first, then redirects)
-    elements.googleAuthBtn.addEventListener('click', async () => {
-        const settingsPayload = {
-            ...state.settings,
-            calendar_id: elements.calendarIdInput.value
-        };
-        try {
-            const res = await fetch('/api/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(settingsPayload)
-            });
-            const data = await res.json();
-            if (data.success) {
-                window.location.href = '/api/auth/google';
-            } else {
-                showToast('Failed to save Calendar ID before authentication', 'error');
-            }
-        } catch (e) {
-            showToast('Network error saving settings', 'error');
-        }
-    });
-
-    // Modal Delete Draft button
-    elements.modalDeleteBtn.addEventListener('click', async () => {
-        if (!state.currentEvent) return;
-        if (confirm('Are you sure you want to move this event draft to the trash?')) {
-            await deleteEvent(state.currentEvent.event_id);
-            closeEventModal();
-        }
-    });
-
-    // Modal Restore Draft button
-    elements.modalRestoreBtn.addEventListener('click', async () => {
-        if (!state.currentEvent) return;
-        await restoreEvent(state.currentEvent.event_id);
-        closeEventModal();
-    });
-
-    // Reset Dashboard Data button
-    elements.resetAllBtn.addEventListener('click', async () => {
-        if (confirm('⚠️ DANGER: Are you absolutely sure you want to reset all dashboard data?\n\nThis will permanently delete all upcoming draft events, sent emails logs, and trash. Your SMTP configuration settings will be preserved. This action CANNOT be undone!')) {
+    if (elements.googleAuthBtn) {
+        elements.googleAuthBtn.addEventListener('click', async () => {
+            const settingsPayload = {
+                ...state.settings,
+                calendar_id: elements.calendarIdInput.value
+            };
             try {
-                const res = await fetch('/api/settings/reset', { method: 'POST' });
+                const res = await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(settingsPayload)
+                });
                 const data = await res.json();
                 if (data.success) {
-                    showToast(data.message, 'success');
-                    // Click the upcoming drafts tab button to switch view and refresh
-                    document.querySelector('.tab-btn[data-tab="upcoming"]').click();
+                    window.location.href = '/api/auth/google';
                 } else {
-                    showToast('Reset failed', 'error');
+                    showToast('Failed to save Calendar ID before authentication', 'error');
                 }
             } catch (e) {
-                showToast('Network error resetting database', 'error');
+                showToast('Network error saving settings', 'error');
             }
-        }
-    });
+        });
+    }
+
+    // Format selection dropdown in settings
+    if (elements.settingsFormatSelect) {
+        elements.settingsFormatSelect.addEventListener('change', (e) => {
+            loadFormatDetails(e.target.value);
+        });
+    }
+
+    // Create format template button in settings
+    if (elements.createFormatBtn) {
+        elements.createFormatBtn.addEventListener('click', () => {
+            const newName = prompt('Enter a name for the new email format template:');
+            if (!newName) return;
+            const trimmed = newName.trim();
+            if (!trimmed) return;
+            
+            const exists = state.formats.some(f => f.name.toLowerCase() === trimmed.toLowerCase());
+            if (exists) {
+                showToast('A format template with that name already exists.', 'error');
+                return;
+            }
+            
+            elements.templateNameInput.value = trimmed;
+            elements.templateSubject.value = '';
+            elements.templateBody.value = '';
+            elements.setDefaultFormatCheckbox.checked = false;
+            originalFormatName = '';
+            
+            showToast(`Template layout created: "${trimmed}". Customize subject & body below and click Save.`, 'info');
+        });
+    }
+
+    // Delete format template button in settings
+    if (elements.deleteFormatBtn) {
+        elements.deleteFormatBtn.addEventListener('click', async () => {
+            const currentName = elements.settingsFormatSelect.value;
+            if (!currentName) return;
+            
+            if (state.formats.length <= 1) {
+                showToast('You must keep at least one email format template.', 'error');
+                return;
+            }
+            
+            if (!confirm(`Are you sure you want to permanently delete the template format "${currentName}"?`)) {
+                return;
+            }
+            
+            try {
+                const res = await fetch(`/api/formats/${encodeURIComponent(currentName)}`, {
+                    method: 'DELETE'
+                });
+                const data = await res.json();
+                
+                if (data.success) {
+                    showToast('Template format deleted successfully.', 'success');
+                    await fetchSettings();
+                } else {
+                    showToast(data.error || 'Failed to delete template format', 'error');
+                }
+            } catch (e) {
+                showToast('Network error deleting format template', 'error');
+            }
+        });
+    }
+
+    // Format selection dropdown in event modal
+    if (elements.modalFormatSelect) {
+        elements.modalFormatSelect.addEventListener('change', async (e) => {
+            const selectedFormatName = e.target.value;
+            if (!selectedFormatName) return;
+            
+            if (!state.currentEvent) return;
+            
+            if (!confirm('Changing the format will overwrite your current subject and body draft. Do you want to continue?')) {
+                elements.modalFormatSelect.value = "";
+                return;
+            }
+            
+            const selectedFmt = state.formats.find(f => f.name === selectedFormatName);
+            if (!selectedFmt) return;
+            
+            const eventData = {
+                ...state.currentEvent,
+                name: elements.modalInputTitle.value,
+                participant_first_name: elements.modalInputFirst.value,
+                participant_last_name: elements.modalInputLast.value,
+                participant_email: elements.modalInputEmail.value,
+            };
+            
+            const placeholderData = {
+                first_name: eventData.participant_first_name,
+                last_name: eventData.participant_last_name,
+                event_name: eventData.name,
+                event_date: eventData.date_display,
+                event_time: eventData.time_display,
+                email: eventData.participant_email,
+                event_day: eventData.event_day,
+                week_day: eventData.week_day,
+                event_month: eventData.event_month,
+                event_time_24h: eventData.event_time_24h
+            };
+            
+            try {
+                const res = await fetch('/api/formats/compile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        subject_template: selectedFmt.subject_template,
+                        body_template: selectedFmt.body_template,
+                        event_data: placeholderData
+                    })
+                });
+                const data = await res.json();
+                
+                elements.modalInputSubject.value = data.compiled_subject;
+                elements.modalInputBody.value = data.compiled_body;
+                showToast(`Template "${selectedFormatName}" applied successfully!`, 'success');
+            } catch (err) {
+                showToast('Failed to compile template', 'error');
+            }
+        });
+    }
+
+    // Upcoming Event Day Filtering Listeners
+    if (elements.filterDaysToggle) {
+        elements.filterDaysToggle.addEventListener('change', renderUpcomingGrid);
+    }
+    if (elements.filterDaysSelect) {
+        elements.filterDaysSelect.addEventListener('change', () => {
+            if (elements.filterDaysToggle && elements.filterDaysToggle.checked) {
+                renderUpcomingGrid();
+            }
+        });
+    }
+
+    // Modal Delete Draft button
+    if (elements.modalDeleteBtn) {
+        elements.modalDeleteBtn.addEventListener('click', async () => {
+            if (!state.currentEvent) return;
+            if (confirm('Are you sure you want to move this event draft to the trash?')) {
+                await deleteEvent(state.currentEvent.event_id);
+                closeEventModal();
+            }
+        });
+    }
+
+    // Modal Restore Draft button
+    if (elements.modalRestoreBtn) {
+        elements.modalRestoreBtn.addEventListener('click', async () => {
+            if (!state.currentEvent) return;
+            await restoreEvent(state.currentEvent.event_id);
+            closeEventModal();
+        });
+    }
+
+    // Reset Dashboard Data button
+    if (elements.resetAllBtn) {
+        elements.resetAllBtn.addEventListener('click', async () => {
+            if (confirm('⚠️ DANGER: Are you absolutely sure you want to reset all dashboard data?\n\nThis will permanently delete all upcoming draft events, sent emails logs, and trash. Your SMTP configuration settings will be preserved. This action CANNOT be undone!')) {
+                try {
+                    const res = await fetch('/api/settings/reset', { method: 'POST' });
+                    const data = await res.json();
+                    if (data.success) {
+                        showToast(data.message, 'success');
+                        document.querySelector('.tab-btn[data-tab="upcoming"]').click();
+                    } else {
+                        showToast('Reset failed', 'error');
+                    }
+                } catch (e) {
+                    showToast('Network error resetting database', 'error');
+                }
+            }
+        });
+    }
     
     // Fetch initial workspace dashboard data
     fetchEvents();

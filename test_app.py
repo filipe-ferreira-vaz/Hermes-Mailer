@@ -223,5 +223,86 @@ class TestHermesDashboard(unittest.TestCase):
         db.reset_db()
         self.assertEqual(len(db.get_all_events()), 0)
 
+    def test_email_formats_db_helpers(self):
+        # Initial count (seeds 'Default Reminder' by default)
+        formats = db.get_all_formats()
+        self.assertEqual(len(formats), 1)
+        self.assertEqual(formats[0]['name'], 'Default Reminder')
+        
+        # Save new format
+        db.save_format('Follow-up', 'Subject: {event_name}', 'Body: {first_name}')
+        formats = db.get_all_formats()
+        self.assertEqual(len(formats), 2)
+        
+        # Retrieve it
+        fmt = db.get_format('Follow-up')
+        self.assertIsNotNone(fmt)
+        self.assertEqual(fmt['subject_template'], 'Subject: {event_name}')
+        
+        # Rename it
+        db.save_format('Follow-up Updated', 'Subject New', 'Body New', original_name='Follow-up')
+        self.assertIsNone(db.get_format('Follow-up'))
+        fmt_upd = db.get_format('Follow-up Updated')
+        self.assertIsNotNone(fmt_upd)
+        self.assertEqual(fmt_upd['subject_template'], 'Subject New')
+        
+        # Delete format
+        db.delete_format('Follow-up Updated')
+        self.assertIsNone(db.get_format('Follow-up Updated'))
+        self.assertEqual(len(db.get_all_formats()), 1)
+
+    def test_flask_formats_endpoints(self):
+        from app import app
+        app.config['TESTING'] = True
+        client = app.test_client()
+        
+        # GET /api/formats
+        response = client.get('/api/formats')
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]['name'], 'Default Reminder')
+        
+        # POST /api/formats (create new format)
+        payload = {
+            'name': 'New Format Option',
+            'subject_template': 'Test Subj {event_name}',
+            'body_template': 'Test Body {first_name}',
+            'original_name': ''
+        }
+        response = client.post('/api/formats', json=payload)
+        self.assertEqual(response.status_code, 200)
+        
+        # Verify it was added
+        response = client.get('/api/formats')
+        data = response.get_json()
+        self.assertEqual(len(data), 2)
+        
+        # POST /api/formats/compile
+        compile_payload = {
+            'subject_template': 'Hello {first_name} for {event_name}',
+            'body_template': 'Dear {first_name} {last_name}, time is {event_time_24h}',
+            'event_data': {
+                'first_name': 'Mary',
+                'last_name': 'Jane',
+                'event_name': 'Party',
+                'event_time_24h': '19:00'
+            }
+        }
+        response = client.post('/api/formats/compile', json=compile_payload)
+        self.assertEqual(response.status_code, 200)
+        compiled_data = response.get_json()
+        self.assertEqual(compiled_data['compiled_subject'], 'Hello Mary for Party')
+        self.assertEqual(compiled_data['compiled_body'], 'Dear Mary Jane, time is 19:00')
+        
+        # DELETE /api/formats/<name>
+        response = client.delete('/api/formats/New Format Option')
+        self.assertEqual(response.status_code, 200)
+        
+        # Verify it was deleted
+        response = client.get('/api/formats')
+        data = response.get_json()
+        self.assertEqual(len(data), 1)
+
 if __name__ == '__main__':
     unittest.main()
