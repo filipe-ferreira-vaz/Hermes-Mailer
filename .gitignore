@@ -1,0 +1,30 @@
+# Google API Credentials & Access Tokens (SENSITIVE)
+credentials.json
+token.json
+
+# Local SQLite Databases (Contains SMTP passwords, participant names, and email logs)
+*.db
+hermes.db
+test_hermes.db
+
+# Python Bytecode and Caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Virtual Environments
+venv/
+.venv/
+ENV/
+env/
+
+# Editor and IDE Settings
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.DS_Store
