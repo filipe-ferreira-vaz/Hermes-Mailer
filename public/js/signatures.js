@@ -114,7 +114,7 @@ async function activateSignature(id) {
 function updateSignaturePreview() {
   const preview = document.getElementById('signature-preview');
   const content = document.getElementById('signature-editor').innerHTML;
-  preview.innerHTML = content ? `<div class="signature-divider">--</div>${content}` : '<p style="color: #999; font-style: italic;">Preview will appear here...</p>';
+  preview.innerHTML = content ? content : '<p style="color: #999; font-style: italic;">Preview will appear here...</p>';
 }
 
 // Rich text toolbar commands
