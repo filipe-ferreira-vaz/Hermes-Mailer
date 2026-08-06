@@ -47,6 +47,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const tabTitles = {
     pending: '📋 Pending Events',
     scheduled: '📅 Scheduled Events',
+    past: '⏳ Past Events',
     canceled: '❌ Canceled Events',
     sent: '✅ Sent Events',
     settings: '⚙️ Settings',
@@ -148,7 +149,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     events.forEach((event) => {
       const card = document.createElement('div');
-      card.className = 'event-card' + (event.status === 'canceled' ? ' muted' : '');
+      card.className = 'event-card' + (event.status === 'canceled' || event.status === 'past' ? ' muted' : '');
       card.addEventListener('click', () => {
         if (typeof window.openEventModal === 'function') {
           window.openEventModal(event.id);
@@ -247,6 +248,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const days = toggle && toggle.checked ? daySelect.value : null;
       const data = await API.getEvents('pending', days);
       let events = data.events || data || [];
+      events.sort((a, b) => new Date(a.event_datetime) - new Date(b.event_datetime));
       events = filterEventsBySearch(events, 'pending-search');
       renderEventList('pending-events', events, { showFastSchedule: true });
     } catch (e) {
@@ -259,8 +261,22 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const data = await API.getEvents('scheduled');
       let events = data.events || data || [];
+      events.sort((a, b) => new Date(b.scheduled_send_at) - new Date(a.scheduled_send_at));
       events = filterEventsBySearch(events, 'scheduled-search');
       renderEventList('scheduled-events', events);
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function loadPastTab() {
+    showSkeletons('past-events');
+    try {
+      const data = await API.getEvents('past');
+      let events = data.events || data || [];
+      events.sort((a, b) => new Date(b.event_datetime) - new Date(a.event_datetime));
+      events = filterEventsBySearch(events, 'past-search');
+      renderEventList('past-events', events);
     } catch (e) {
       console.error(e);
     }
@@ -271,6 +287,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const data = await API.getEvents('canceled');
       let events = data.events || data || [];
+      events.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
       events = filterEventsBySearch(events, 'canceled-search');
       renderEventList('canceled-events', events);
     } catch (e) {
@@ -283,6 +300,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const data = await API.getEvents('sent');
       let events = data.events || data || [];
+      events.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
       events = filterEventsBySearch(events, 'sent-search');
       renderEventList('sent-events', events);
     } catch (e) {
@@ -306,7 +324,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Debounced search handlers
-  const searchIds = ['pending-search', 'scheduled-search', 'canceled-search', 'sent-search'];
+  const searchIds = ['pending-search', 'scheduled-search', 'past-search', 'canceled-search', 'sent-search'];
   searchIds.forEach((id) => {
     const input = document.getElementById(id);
     if (!input) return;
@@ -395,6 +413,9 @@ document.addEventListener('DOMContentLoaded', () => {
       case 'scheduled':
         loadScheduledTab();
         break;
+      case 'past':
+        loadPastTab();
+        break;
       case 'canceled':
         loadCanceledTab();
         break;
@@ -404,14 +425,60 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // ── Auth Check ──────────────────────────────────────────────────────
+  async function checkAuthStatus() {
+    try {
+      const status = await API.getAuthStatus();
+      const banner = document.getElementById('auth-banner');
+      const authStatus = document.getElementById('auth-status');
+      const authEmail = document.getElementById('auth-email');
+
+      if (status.authenticated) {
+        if (banner) banner.hidden = true;
+        if (authStatus) {
+          authStatus.hidden = false;
+          if (authEmail) authEmail.textContent = status.email || 'your account';
+          // Auto-hide after 5 seconds
+          setTimeout(() => { authStatus.hidden = true; }, 5000);
+        }
+        return true;
+      } else {
+        if (banner) banner.hidden = false;
+        if (authStatus) authStatus.hidden = true;
+        return false;
+      }
+    } catch (e) {
+      console.error('Auth check failed:', e);
+      return false;
+    }
+  }
+
   // ── Initial Load ─────────────────────────────────────────────────────
-  loadPendingTab();
+
+  // Check for auth redirect params
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('auth') === 'success') {
+    showToast('Google account connected successfully! 🎉', 'success');
+    window.history.replaceState({}, '', '/');
+  } else if (urlParams.get('auth') === 'error') {
+    showToast('Failed to connect Google account. Please try again.', 'error');
+    window.history.replaceState({}, '', '/');
+  }
+
+  // Check auth then load
+  checkAuthStatus().then(authenticated => {
+    if (authenticated) {
+      loadPendingTab();
+    }
+  });
 
   // ── Expose Globals ────────────────────────────────────────────────────
   window.loadCurrentTab = loadCurrentTab;
   window.loadPendingTab = loadPendingTab;
   window.loadScheduledTab = loadScheduledTab;
+  window.loadPastTab = loadPastTab;
   window.loadCanceledTab = loadCanceledTab;
   window.loadSentTab = loadSentTab;
   window.handleFastSchedule = handleFastSchedule;
+  window.checkAuthStatus = checkAuthStatus;
 });

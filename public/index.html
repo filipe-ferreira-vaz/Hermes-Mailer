@@ -33,6 +33,10 @@
         <span class="nav-icon">📅</span>
         <span class="nav-label">Scheduled</span>
       </a>
+      <a class="nav-item" data-tab="past">
+        <span class="nav-icon">⏳</span>
+        <span class="nav-label">Past Events</span>
+      </a>
       <a class="nav-item" data-tab="canceled">
         <span class="nav-icon">❌</span>
         <span class="nav-label">Canceled</span>
@@ -58,6 +62,23 @@
     <header class="content-header">
       <h1 id="header-title">Pending Events</h1>
     </header>
+
+    <!-- Auth Banner (shown when not authenticated) -->
+    <div id="auth-banner" class="auth-banner" hidden>
+      <div class="auth-banner-content">
+        <span class="auth-banner-icon">🔐</span>
+        <div class="auth-banner-text">
+          <strong>Google Account not connected</strong>
+          <p>Connect your Google account to sync calendar events and send emails.</p>
+        </div>
+        <a href="/auth/google" class="btn btn-primary auth-connect-btn">Connect Google Account</a>
+      </div>
+    </div>
+
+    <!-- Auth Status (shown when authenticated) -->
+    <div id="auth-status" class="auth-status" hidden>
+      <span>✅ Connected as <strong id="auth-email"></strong></span>
+    </div>
 
     <!-- ─── Pending Tab ─── -->
     <section id="pending-content" class="tab-content active">
@@ -98,6 +119,19 @@
         >
       </div>
       <div id="scheduled-events" class="event-list"></div>
+    </section>
+
+    <!-- ─── Past Events Tab ─── -->
+    <section id="past-content" class="tab-content">
+      <div class="tab-toolbar">
+        <input
+          type="text"
+          id="past-search"
+          class="search-input"
+          placeholder="Search past events..."
+        >
+      </div>
+      <div id="past-events" class="event-list"></div>
     </section>
 
     <!-- ─── Canceled Tab ─── -->

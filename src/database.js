@@ -246,7 +246,7 @@ async function initDatabase() {
     },
 
     getAllNonFinal() {
-      return getAll("SELECT * FROM events WHERE status NOT IN ('sent', 'canceled') ORDER BY event_datetime ASC");
+      return getAll("SELECT * FROM events WHERE status NOT IN ('sent', 'canceled', 'past') ORDER BY event_datetime ASC");
     }
   };
 

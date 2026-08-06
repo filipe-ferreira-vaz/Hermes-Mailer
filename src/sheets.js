@@ -1,31 +1,15 @@
 const { google } = require('googleapis');
 
-let cachedAuth = null;
+const { getAuthClient } = require('./auth');
+
 let cachedSheetName = null;
 
 /**
- * Get or create the Google Sheets auth client (cached).
- * @returns {google.auth.JWT}
- */
-function getAuth() {
-  if (cachedAuth) return cachedAuth;
-
-  cachedAuth = new google.auth.JWT(
-    process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    null,
-    process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-    ['https://www.googleapis.com/auth/spreadsheets']
-  );
-
-  return cachedAuth;
-}
-
-/**
- * Get a Google Sheets API instance.
+ * Get a Google Sheets API instance using the shared OAuth client.
  * @returns {google.sheets}
  */
 function getSheetsApi() {
-  const auth = getAuth();
+  const auth = getAuthClient();
   return google.sheets({ version: 'v4', auth });
 }
 

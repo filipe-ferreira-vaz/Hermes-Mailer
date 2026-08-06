@@ -1,50 +1,87 @@
-const nodemailer = require('nodemailer');
+const { google } = require('googleapis');
+const { getAuthClient, getEmail } = require('./auth');
 
 /**
- * Create and cache the Nodemailer transporter.
- * Used ONLY for "Send Immediately" — scheduled emails go through Google Sheets + Apps Script.
- */
-let transporter = null;
-
-function getTransporter() {
-  if (transporter) return transporter;
-
-  transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: parseInt(process.env.SMTP_PORT) || 587,
-    secure: false, // Use STARTTLS for port 587
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-  });
-
-  return transporter;
-}
-
-/**
- * Send an email immediately via SMTP.
+ * Send an email via the Gmail API.
+ * Uses the OAuth2 client — no SMTP or App Passwords needed.
  * @param {string} to - Recipient email address
  * @param {string} subject - Email subject
  * @param {string} htmlBody - Full HTML email body
  * @returns {Promise<{ success: boolean, messageId?: string, error?: string }>}
  */
+/**
+ * Repair "mojibake" strings — UTF-8 text that was accidentally read/encoded
+ * as Latin-1 one or more times (e.g. "SessÃ£o" instead of "Sessão", or the
+ * double-encoded "SessÃƒÂ£o"). The repair is safe and idempotent: valid
+ * UTF-8 strings are returned unchanged.
+ * @param {string} value - Value to normalize
+ * @returns {string} Repaired UTF-8 string (or original if nothing to repair)
+ */
+function normalizeUtf8(value) {
+  if (typeof value !== 'string') return value;
+  let current = value;
+  for (let i = 0; i < 3; i++) {
+    // Interpret the current string's chars as Latin-1 bytes, then decode as UTF-8.
+    // Only accept the result if it's valid UTF-8 and actually changed.
+    const decoded = Buffer.from(current, 'latin1').toString('utf8');
+    if (decoded.includes('\uFFFD')) break; // invalid -> not mojibake, stop
+    if (decoded === current) break; // no change
+    current = decoded;
+  }
+  return current;
+}
+
+/**
+ * Encode a header value containing non-ASCII characters using RFC 2047.
+ * Any mojibake (double-encoded UTF-8) is repaired before encoding.
+ * @param {string} value - Header value to encode
+ * @returns {string} RFC 2047 encoded value (or original if pure ASCII)
+ */
+function encodeHeader(value) {
+  value = normalizeUtf8(value);
+  if (/^[\x00-\x7F]*$/.test(value)) {
+    return value;
+  }
+  const encoded = Buffer.from(value, 'utf-8').toString('base64');
+  return `=?UTF-8?B?${encoded}?=`;
+}
+
 async function sendEmail(to, subject, htmlBody) {
   try {
-    const transport = getTransporter();
+    const auth = getAuthClient();
+    const gmail = google.gmail({ version: 'v1', auth });
 
     const fromName = process.env.EMAIL_FROM_NAME || 'Hermes Dashboard';
-    const fromEmail = process.env.SMTP_USER;
+    const fromEmail = getEmail() || 'me';
 
-    const info = await transport.sendMail({
-      from: `"${fromName}" <${fromEmail}>`,
-      to: to,
-      subject: subject,
-      html: htmlBody,
+    // Build RFC 2822 MIME message
+    const messageParts = [
+      `From: "${fromName}" <${fromEmail}>`,
+      `To: ${to}`,
+      `Subject: ${encodeHeader(subject)}`,
+      'MIME-Version: 1.0',
+      'Content-Type: text/html; charset=utf-8',
+      '',
+      htmlBody,
+    ];
+    const rawMessage = messageParts.join('\r\n');
+
+    // Base64url encode the message
+    const encodedMessage = Buffer.from(rawMessage)
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+
+    const result = await gmail.users.messages.send({
+      userId: 'me',
+      requestBody: {
+        raw: encodedMessage,
+      },
     });
 
-    console.log(`[Mailer] Email sent to ${to}, messageId: ${info.messageId}`);
-    return { success: true, messageId: info.messageId };
+    console.log(`[Mailer] Email sent to ${to} via Gmail API, messageId: ${result.data.id}`);
+    return { success: true, messageId: result.data.id };
   } catch (err) {
     console.error(`[Mailer] Failed to send email to ${to}:`, err.message);
     return { success: false, error: err.message };
@@ -66,6 +103,10 @@ function renderTemplate(templateStr, variables) {
     const placeholder = new RegExp(`\\{\\{${key}\\}\\}`, 'g');
     rendered = rendered.replace(placeholder, value || '');
   }
+
+  // Repair any mojibake (double-encoded UTF-8) that slipped into the template
+  // or the variable values, so subjects/bodies are always clean UTF-8.
+  rendered = normalizeUtf8(rendered);
 
   // Convert plain-text newlines to <br> if the template doesn't already
   // contain block-level HTML elements (i.e. it's mostly plain text)
@@ -99,5 +140,7 @@ function buildEmailHtml(bodyHtml, signatureHtml) {
 module.exports = {
   sendEmail,
   renderTemplate,
-  buildEmailHtml
+  buildEmailHtml,
+  encodeHeader,
+  normalizeUtf8
 };

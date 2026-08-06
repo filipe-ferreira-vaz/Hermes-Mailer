@@ -41,6 +41,12 @@ const API = {
     }
   },
 
+  // ── Auth ───────────────────────────────────────────────────────────────
+
+  async getAuthStatus() {
+    return this._request('/api/auth/status');
+  },
+
   // ── Events ──────────────────────────────────────────────────────────────
 
   async getEvents(status, days = null) {

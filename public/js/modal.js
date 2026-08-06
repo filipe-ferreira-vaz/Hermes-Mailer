@@ -146,6 +146,7 @@ function setupModalActions(event) {
       cancelEmailBtn.style.display = 'inline-flex';
       inputs.forEach(i => i.readOnly = true);
       break;
+    case 'past':
     case 'canceled':
     case 'sent':
       inputs.forEach(i => i.readOnly = true);
@@ -157,8 +158,8 @@ function renderEmailPreview() {
   const preview = document.getElementById('email-preview');
   const status = document.getElementById('modal-event-status').value;
 
-  // For sent/scheduled/canceled events, show the stored email as-is
-  if ((status === 'sent' || status === 'scheduled' || status === 'canceled') && currentModalEvent && currentModalEvent.email_body) {
+  // For sent/scheduled/canceled/past events, show the stored email as-is
+  if ((status === 'sent' || status === 'scheduled' || status === 'canceled' || status === 'past') && currentModalEvent && currentModalEvent.email_body) {
     let html = '';
     if (currentModalEvent.email_subject) {
       html += `<div style="margin-bottom: 8px; color: #666; font-size: 0.85rem;"><strong>Subject:</strong> ${currentModalEvent.email_subject}</div><hr style="border: none; border-top: 1px solid #eee; margin: 8px 0;">`;

@@ -8,6 +8,7 @@ const sheets = require('./src/sheets');
 const mailer = require('./src/mailer');
 const scheduler = require('./src/scheduler');
 const { createRouter } = require('./src/routes');
+const auth = require('./src/auth');
 
 const PORT = process.env.PORT || 3000;
 
@@ -24,14 +25,59 @@ async function startServer() {
   // Initialize database (async with sql.js)
   const db = await initDatabase();
 
-  // Ensure Google Sheet headers
-  try {
-    await sheets.ensureHeaders();
-    console.log('[Server] Google Sheet headers verified');
-  } catch (err) {
-    console.error('[Server] Failed to verify Sheet headers:', err.message);
-    console.log('[Server] Sheet integration may not work. Check your .env credentials.');
-  }
+  // ── OAuth Routes ───────────────────────────────────────────────────────
+
+  /**
+   * GET /auth/google — Redirect user to Google OAuth consent screen
+   */
+  app.get('/auth/google', (req, res) => {
+    try {
+      const authUrl = auth.getAuthUrl();
+      res.redirect(authUrl);
+    } catch (err) {
+      console.error('[Auth] Error generating auth URL:', err.message);
+      res.status(500).send('OAuth configuration error. Check GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env');
+    }
+  });
+
+  /**
+   * GET /auth/google/callback — Handle OAuth callback
+   */
+  app.get('/auth/google/callback', async (req, res) => {
+    const { code, error } = req.query;
+
+    if (error) {
+      console.error('[Auth] OAuth error:', error);
+      return res.redirect('/?auth=error');
+    }
+
+    if (!code) {
+      return res.redirect('/?auth=error');
+    }
+
+    try {
+      const result = await auth.handleCallback(code);
+      console.log(`[Auth] Successfully authenticated as: ${result.email}`);
+
+      // Now that we're authenticated, initialize Sheet and start syncing
+      await initGoogleServices(db);
+
+      res.redirect('/?auth=success');
+    } catch (err) {
+      console.error('[Auth] Callback error:', err.message);
+      res.redirect('/?auth=error');
+    }
+  });
+
+  /**
+   * GET /api/auth/status — Check authentication status
+   */
+  app.get('/api/auth/status', (req, res) => {
+    res.json({
+      authenticated: auth.isAuthenticated(),
+      email: auth.getEmail(),
+    });
+  });
 
   // Mount API routes
   const router = createRouter({ db, sheets, mailer, scheduler, calendar });
@@ -47,8 +93,9 @@ async function startServer() {
   // Start sync intervals
   const SYNC_INTERVAL = (parseInt(process.env.SYNC_INTERVAL_MINUTES) || 5) * 60 * 1000;
 
-  // Calendar sync interval
+  // Calendar sync interval (only runs if authenticated)
   setInterval(async () => {
+    if (!auth.isAuthenticated()) return;
     try {
       const result = await calendar.syncEvents(db, sheets);
       console.log(`[Sync] Calendar sync complete: ${result.synced} events, ${result.newEvents} new, ${result.canceled} canceled`);
@@ -57,8 +104,9 @@ async function startServer() {
     }
   }, SYNC_INTERVAL);
 
-  // Sheet sent-status sync interval (every 2 minutes)
+  // Sheet sent-status sync interval (every 2 minutes, only if authenticated)
   setInterval(async () => {
+    if (!auth.isAuthenticated()) return;
     try {
       await sheets.syncSentStatus(db);
     } catch (err) {
@@ -78,14 +126,35 @@ async function startServer() {
       // open module not critical
     }
 
-    // Run initial sync
+    // Try to initialize auth from existing refresh token
+    const authenticated = await auth.initAuth();
+
+    if (authenticated) {
+      await initGoogleServices(db);
+    } else {
+      console.log('[Server] Not authenticated yet. Visit the dashboard and click "Connect Google Account".');
+    }
+  });
+
+  // Google services initialization (runs after successful OAuth)
+  async function initGoogleServices(db) {
+    // Ensure Google Sheet headers
+    try {
+      await sheets.ensureHeaders();
+      console.log('[Server] Google Sheet headers verified');
+    } catch (err) {
+      console.error('[Server] Failed to verify Sheet headers:', err.message);
+      console.log('[Server] Sheet integration may not work. Check your GOOGLE_SHEET_ID.');
+    }
+
+    // Run initial calendar sync
     try {
       const result = await calendar.syncEvents(db, sheets);
       console.log(`[Sync] Initial sync complete: ${result.synced} events, ${result.newEvents} new, ${result.canceled} canceled`);
     } catch (err) {
       console.error('[Sync] Initial sync failed:', err.message);
     }
-  });
+  }
 
   // Graceful shutdown
   process.on('SIGINT', () => {
